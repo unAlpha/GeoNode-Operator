@@ -8,7 +8,7 @@
 bl_info = {
     "name": "几何节点数学表达式",
     "author": "pdsharing.com",
-    "version": (1, 1, 0),
+    "version": (2, 0, 0),
     "blender": (3, 0, 0),
     "location": "几何节点编辑器 > 侧边栏 (N) > Math Expression",
     "description": "将数学表达式自动转换为几何节点组",
@@ -372,6 +372,10 @@ def create_expression_nodegroup(expression, node_group_name="MathExpression"):
 
     output_node.location = (builder.current_x + 200, 0)
 
+    # 存储原始表达式和创建标记（用于后续识别和加载）
+    ng["math_expr_original"] = expression
+    ng["math_expr_created_by"] = "math_expression_addon"
+
     print(f"成功创建节点组 '{node_group_name}'，包含 {builder.node_count} 个数学节点")
 
     return ng
@@ -380,6 +384,16 @@ def create_expression_nodegroup(expression, node_group_name="MathExpression"):
 # ============================================================================
 # Blender 插件代码
 # ============================================================================
+
+
+def get_math_expression_node_groups():
+    """获取所有由本插件创建的节点组"""
+    result = []
+    for ng in bpy.data.node_groups:
+        if ng.bl_idname == "GeometryNodeTree" and "math_expr_created_by" in ng:
+            if ng["math_expr_created_by"] == "math_expression_addon":
+                result.append(ng)
+    return result
 
 
 class MATHEXP_OT_CreateNodeGroup(bpy.types.Operator):
@@ -581,8 +595,10 @@ class MATHEXP_PT_Panel(bpy.types.Panel):
         box.label(text="表达式:", icon="SYNTAX_ON")
         box.prop(props, "expression", text="")
 
-        # 节点组名称
-        box.prop(props, "node_group_name", text="名称")
+        # 节点组名称和清空按钮
+        row = box.row(align=True)
+        row.prop(props, "node_group_name", text="名称")
+        row.operator("node.math_expression_clear", text="", icon="X")
 
         # 节点组状态提示
         if node_group_exists:
@@ -615,29 +631,76 @@ class MATHEXP_PT_Panel(bpy.types.Panel):
         # 选项
         box.prop(props, "clear_after_create", text="创建后清空表达式")
 
-        # 快速示例
+        # 节点组列表
         layout.separator()
         box = layout.box()
-        box.label(text="快速示例:", icon="PRESET")
 
-        # 示例列表 - 使用 column(align=True) 让按钮紧密排列
-        col = box.column(align=True)
+        # 获取所有由工具创建的节点组
+        math_node_groups = get_math_expression_node_groups()
 
-        examples = [
-            ("a + b", "简单加法", "ADD"),
-            ("sin(x) * a", "正弦波", "FCURVE"),
-            ("sqrt(x**2 + y**2)", "距离", "DRIVER_DISTANCE"),
-            ("clamp(x, 0, 1)", "限制范围", "CLIPUV_DEHLT"),
-            ("1 / (1 + exp(-x))", "Sigmoid", "IPO_EASE_IN_OUT"),
-        ]
+        if math_node_groups:
+            box.label(
+                text=f"已创建的节点组 ({len(math_node_groups)}):", icon="NODETREE"
+            )
 
-        for expr, desc, icon in examples:
-            row = col.row(align=True)
-            row.scale_y = 1.2
+            # 节点组列表
+            col = box.column(align=True)
+            for ng in math_node_groups:
+                row = col.row(align=True)
+                row.scale_y = 1.1
 
-            # 示例按钮
-            op = row.operator("node.math_expression_insert", text=desc, icon=icon)
-            op.expression = expr
+                # 节点组加载按钮
+                op = row.operator(
+                    "node.math_expression_load", text=ng.name, icon="NODE"
+                )
+                op.node_group_name = ng.name
+
+                # 显示表达式预览（如果有）
+                if "math_expr_original" in ng:
+                    expr = ng["math_expr_original"]
+                    # 截断过长的表达式
+                    if len(expr) > 30:
+                        expr_preview = expr[:27] + "..."
+                    else:
+                        expr_preview = expr
+                    row.label(text=f"  {expr_preview}")
+        else:
+            box.label(text="暂无创建的节点组", icon="INFO")
+
+        # 快速示例（可折叠）
+        layout.separator()
+        box = layout.box()
+
+        # 折叠标题行
+        row = box.row()
+        row.prop(
+            props,
+            "show_examples",
+            icon="TRIA_DOWN" if props.show_examples else "TRIA_RIGHT",
+            icon_only=True,
+            emboss=False,
+        )
+        row.label(text="快速示例", icon="PRESET")
+
+        # 展开时显示示例列表
+        if props.show_examples:
+            col = box.column(align=True)
+
+            examples = [
+                ("a + b", "简单加法", "ADD"),
+                ("sin(x) * a", "正弦波", "FCURVE"),
+                ("sqrt(x**2 + y**2)", "距离", "DRIVER_DISTANCE"),
+                ("clamp(x, 0, 1)", "限制范围", "CLIPUV_DEHLT"),
+                ("1 / (1 + exp(-x))", "Sigmoid", "IPO_EASE_IN_OUT"),
+            ]
+
+            for expr, desc, icon in examples:
+                row = col.row(align=True)
+                row.scale_y = 1.2
+
+                # 示例按钮
+                op = row.operator("node.math_expression_insert", text=desc, icon=icon)
+                op.expression = expr
 
 
 class MATHEXP_OT_InsertExample(bpy.types.Operator):
@@ -651,6 +714,53 @@ class MATHEXP_OT_InsertExample(bpy.types.Operator):
 
     def execute(self, context):
         context.scene.math_expression_props.expression = self.expression
+        return {"FINISHED"}
+
+
+class MATHEXP_OT_ClearFields(bpy.types.Operator):
+    """清空表达式和名称"""
+
+    bl_idname = "node.math_expression_clear"
+    bl_label = "清空"
+    bl_description = "清空表达式和节点组名称"
+
+    def execute(self, context):
+        props = context.scene.math_expression_props
+        props.expression = ""
+        props.node_group_name = "MathExpression"
+        self.report({"INFO"}, "已清空表达式和名称")
+        return {"FINISHED"}
+
+
+class MATHEXP_OT_LoadNodeGroup(bpy.types.Operator):
+    """从节点组加载表达式"""
+
+    bl_idname = "node.math_expression_load"
+    bl_label = "加载节点组"
+    bl_description = "从选择的节点组加载表达式和名称"
+
+    node_group_name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        props = context.scene.math_expression_props
+
+        if self.node_group_name not in bpy.data.node_groups:
+            self.report({"ERROR"}, f"节点组 '{self.node_group_name}' 不存在")
+            return {"CANCELLED"}
+
+        ng = bpy.data.node_groups[self.node_group_name]
+
+        # 加载表达式（如果存储了）
+        if "math_expr_original" in ng:
+            props.expression = ng["math_expr_original"]
+            props.node_group_name = ng.name
+            self.report({"INFO"}, f"已加载节点组 '{ng.name}'")
+        else:
+            # 如果没有存储表达式，只加载名称
+            props.node_group_name = ng.name
+            props.expression = ""
+            self.report({"WARNING"}, f"节点组 '{ng.name}' 没有存储表达式信息")
+
         return {"FINISHED"}
 
 
@@ -669,6 +779,10 @@ class MathExpressionProperties(bpy.types.PropertyGroup):
         name="创建后清空", description="创建节点组后清空表达式输入框", default=False
     )
 
+    show_examples: bpy.props.BoolProperty(
+        name="显示快速示例", description="显示或隐藏快速示例列表", default=False
+    )
+
 
 # ============================================================================
 # 注册和注销
@@ -680,6 +794,8 @@ classes = (
     MATHEXP_OT_UpdateNodeGroup,
     MATHEXP_OT_DeleteNodeGroup,
     MATHEXP_OT_InsertExample,
+    MATHEXP_OT_ClearFields,
+    MATHEXP_OT_LoadNodeGroup,
     MATHEXP_PT_Panel,
 )
 

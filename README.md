@@ -14,7 +14,9 @@
 - ✨ **自动添加** - 创建的节点组自动出现在视图中心
 - 🔄 **便捷更新** - 修改表达式后一键更新，所有实例同步
 - 🗑️ **智能清理** - 删除节点组时自动清理场景中的所有实例
-- 📦 **轻量级** - 单文件插件，无外部依赖
+- � **节点组管理** - 列出所有创建的节点组，点击即可加载
+- 🧹 **快速清空** - 一键清空表达式和名称，快速开始新任务
+- �📦 **轻量级** - 单文件插件，无外部依赖
 
 ### 快速开始
 
@@ -125,7 +127,7 @@
 │ │ sin(x) * a + cos(y) * b │ │  ← 输入表达式
 │ └─────────────────────────┘ │
 │                             │
-│ 名称: MathExpression        │  ← 节点组名称
+│ 名称: MathExpression    [X] │  ← 节点组名称 + 清空按钮
 │                             │
 │ ┌─────────────────────────┐ │
 │ │   创建节点组     (+)    │ │  ← 点击创建
@@ -133,14 +135,13 @@
 │                             │
 │ ☐ 创建后清空表达式          │  ← 选项
 │                             │
-│ 快速示例:                   │
+│ 已创建的节点组 (2):         │  ← 节点组列表
 │ ┌─────────────────────────┐ │
-│ │ 简单加法                │ │  ← 示例按钮
-│ │ 正弦波                  │ │
-│ │ 距离                    │ │
-│ │ 限制范围                │ │
-│ │ Sigmoid                 │ │
+│ │ Wave    sin(x) * a      │ │  ← 点击加载
+│ │ Distance  sqrt(x**2+...) │ │
 │ └─────────────────────────┘ │
+│                             │
+│ ▶ 快速示例                  │  ← 可折叠
 └─────────────────────────────┘
 ```
 
@@ -155,7 +156,7 @@
 │ │ cos(x) * b              │ │  ← 修改表达式
 │ └─────────────────────────┘ │
 │                             │
-│ 名称: MathExpression        │
+│ 名称: MathExpression    [X] │
 │                             │
 │ ✓ 节点组已存在              │  ← 状态提示
 │                             │
@@ -169,7 +170,16 @@
 │                             │
 │ ☐ 创建后清空表达式          │
 │                             │
-│ 快速示例: ...               │
+│ 已创建的节点组 (2): ...     │
+│                             │
+│ ▼ 快速示例                  │  ← 展开状态
+│ ┌─────────────────────────┐ │
+│ │ 简单加法                │ │
+│ │ 正弦波                  │ │
+│ │ 距离                    │ │
+│ │ 限制范围                │ │
+│ │ Sigmoid                 │ │
+│ └─────────────────────────┘ │
 └─────────────────────────────┘
 ```
 
@@ -179,6 +189,7 @@
 - 输入数学表达式，点击"创建节点组"
 - **自动添加到场景**：节点组会自动出现在节点编辑器视图中心
 - 自动选中新创建的节点，方便立即连接和使用
+- 表达式会自动保存在节点组中，方便后续加载
 
 ### 2. 更新节点组 🔄
 - 修改表达式后，点击"更新节点组"
@@ -190,6 +201,22 @@
 - 弹出确认对话框，防止误删
 - **自动清理场景**：删除节点组时，会同时移除当前节点树中所有使用该节点组的节点实例
 - 显示删除统计信息（例如："成功删除节点组及场景中的 3 个实例"）
+
+### 4. 节点组管理 📋
+- **查看列表**：显示所有由插件创建的节点组
+- **表达式预览**：列表中显示每个节点组的表达式（过长会截断）
+- **点击加载**：点击节点组名称，自动加载表达式和名称到编辑区
+- **自动更新**：重命名节点组后，列表会自动反映新名称
+
+### 5. 快速清空 🧹
+- 点击名称输入框右侧的 **X** 按钮
+- 一键清空表达式和节点组名称
+- 快速开始新的创建任务
+
+### 6. 快速示例 📚
+- **折叠显示**：点击三角图标展开/收起示例列表
+- **一键插入**：点击任意示例自动填充表达式
+- 节省空间，保持界面整洁
 
 ## 支持的语法
 
@@ -412,6 +439,23 @@ Call(func=Name('add'), args=[
 - 每创建一个节点，X 坐标增加 200
 - Y 坐标递减 80（形成阶梯状）
 
+### 节点组管理机制（v2.0 新增）
+
+为了实现节点组的列表显示和重新加载功能，插件利用了 Blender 的自定义属性系统：
+
+1.  **元数据存储**：
+    在创建节点组时，插件会向节点组对象写入不可见的元数据：
+    ```python
+    node_group["math_expr_original"] = expression  # 存储原始表达式字符串
+    node_group["math_expr_created_by"] = "math_expression_addon"  # 身份标记
+    ```
+
+2.  **智能识别**：
+    `get_math_expression_node_groups()` 函数遍历所有几何节点组，通过检查 `math_expr_created_by` 属性来筛选出由本插件创建的节点组，从而在面板中显示列表。
+
+3.  **状态恢复**：
+    当用户点击列表中的节点组时，插件读取 `math_expr_original` 属性，将原始表达式填充回输入框，实现"所见即所得"的编辑体验。
+
 ### 关键函数说明
 
 #### create_expression_nodegroup()
@@ -465,6 +509,24 @@ def evaluate(self, node):
         # 常量 - 创建 Value 节点
         return self.get_or_create_constant(node.value)
 ```
+
+#### get_math_expression_node_groups()
+
+辅助函数，用于扫描 Blender 数据块：
+
+```python
+def get_math_expression_node_groups():
+    # 遍历 bpy.data.node_groups
+    # 检查是否有 "math_expr_created_by" 标记
+    # 返回符合条件的节点组列表
+```
+
+#### MATHEXP_OT_LoadNodeGroup
+
+加载操作符：
+- 接收点击的节点组名称
+- 从节点组属性中读取 `math_expr_original`
+- 更新 `context.scene.math_expression_props`
 
 ### 数据流示例
 
@@ -557,17 +619,27 @@ class MathExpressionProperties(bpy.types.PropertyGroup):
     """属性存储"""
     expression: StringProperty()
     node_group_name: StringProperty()
-
+    show_examples: BoolProperty()  # v2.0 新增
+    
 class MATHEXP_OT_CreateNodeGroup(bpy.types.Operator):
     """创建操作器"""
-    def execute(self, context):
-        create_expression_nodegroup(...)
+
+class MATHEXP_OT_UpdateNodeGroup(bpy.types.Operator):
+    """更新操作器 (v2.0)"""
+
+class MATHEXP_OT_DeleteNodeGroup(bpy.types.Operator):
+    """删除操作器 (v2.0)"""
+
+class MATHEXP_OT_LoadNodeGroup(bpy.types.Operator):
+    """加载操作器 (v2.0)"""
+
+class MATHEXP_OT_ClearFields(bpy.types.Operator):
+    """清空操作器 (v2.0)"""
 
 class MATHEXP_PT_Panel(bpy.types.Panel):
     """UI 面板"""
     def draw(self, context):
-        layout.prop(props, "expression")
-        layout.operator("node.math_expression_create")
+        # 绘制输入框、按钮列表、快速示例等
 ```
 
 ### 支持的操作映射
