@@ -8,7 +8,7 @@
 bl_info = {
     "name": "几何节点数学表达式",
     "author": "pdsharing.com",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "blender": (3, 0, 0),
     "location": "几何节点编辑器 > 侧边栏 (N) > Math Expression",
     "description": "将数学表达式自动转换为几何节点组",
@@ -407,6 +407,33 @@ class MATHEXP_OT_CreateNodeGroup(bpy.types.Operator):
 
         try:
             ng = create_expression_nodegroup(props.expression, props.node_group_name)
+
+            # 自动添加到当前节点树中
+            if context.space_data and context.space_data.type == "NODE_EDITOR":
+                node_tree = context.space_data.edit_tree
+                if node_tree and node_tree.bl_idname == "GeometryNodeTree":
+                    # 创建节点组节点
+                    group_node = node_tree.nodes.new("GeometryNodeGroup")
+                    group_node.node_tree = ng
+
+                    # 将节点放置在视图中心
+                    # 获取视图的中心坐标
+                    region = context.region
+                    view2d = context.region.view2d
+                    # 将区域中心转换为节点编辑器坐标
+                    center_x = region.width / 2.0
+                    center_y = region.height / 2.0
+                    node_location = view2d.region_to_view(center_x, center_y)
+                    group_node.location = node_location
+
+                    group_node.select = True
+                    # 取消其他节点的选择
+                    for node in node_tree.nodes:
+                        if node != group_node:
+                            node.select = False
+                    # 设置为活动节点
+                    node_tree.nodes.active = group_node
+
             self.report({"INFO"}, f"成功创建节点组 '{props.node_group_name}'")
 
             # 清空表达式（可选）
@@ -417,6 +444,113 @@ class MATHEXP_OT_CreateNodeGroup(bpy.types.Operator):
 
         except Exception as e:
             self.report({"ERROR"}, f"创建失败: {str(e)}")
+            return {"CANCELLED"}
+
+
+class MATHEXP_OT_UpdateNodeGroup(bpy.types.Operator):
+    """更新已存在的数学表达式节点组"""
+
+    bl_idname = "node.math_expression_update"
+    bl_label = "更新节点组"
+    bl_description = "更新已存在的几何节点组"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        props = context.scene.math_expression_props
+        return props.node_group_name in bpy.data.node_groups
+
+    def execute(self, context):
+        props = context.scene.math_expression_props
+
+        if not props.expression:
+            self.report({"ERROR"}, "请输入表达式")
+            return {"CANCELLED"}
+
+        if not props.node_group_name:
+            self.report({"ERROR"}, "请输入节点组名称")
+            return {"CANCELLED"}
+
+        if props.node_group_name not in bpy.data.node_groups:
+            self.report({"ERROR"}, f"节点组 '{props.node_group_name}' 不存在")
+            return {"CANCELLED"}
+
+        try:
+            ng = create_expression_nodegroup(props.expression, props.node_group_name)
+            self.report({"INFO"}, f"成功更新节点组 '{props.node_group_name}'")
+
+            # 清空表达式（可选）
+            if props.clear_after_create:
+                props.expression = ""
+
+            return {"FINISHED"}
+
+        except Exception as e:
+            self.report({"ERROR"}, f"更新失败: {str(e)}")
+            return {"CANCELLED"}
+
+
+class MATHEXP_OT_DeleteNodeGroup(bpy.types.Operator):
+    """删除数学表达式节点组"""
+
+    bl_idname = "node.math_expression_delete"
+    bl_label = "删除节点组"
+    bl_description = "从工程中删除指定的节点组"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        props = context.scene.math_expression_props
+        return props.node_group_name in bpy.data.node_groups
+
+    def invoke(self, context, event):
+        # 弹出确认对话框
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        props = context.scene.math_expression_props
+
+        if not props.node_group_name:
+            self.report({"ERROR"}, "请输入节点组名称")
+            return {"CANCELLED"}
+
+        if props.node_group_name not in bpy.data.node_groups:
+            self.report({"ERROR"}, f"节点组 '{props.node_group_name}' 不存在")
+            return {"CANCELLED"}
+
+        try:
+            ng = bpy.data.node_groups[props.node_group_name]
+            ng_name = ng.name  # 保存名称用于报告
+
+            # 从当前节点树中删除所有使用该节点组的节点
+            removed_count = 0
+            if context.space_data and context.space_data.type == "NODE_EDITOR":
+                node_tree = context.space_data.edit_tree
+                if node_tree and node_tree.bl_idname == "GeometryNodeTree":
+                    nodes_to_remove = []
+                    for node in node_tree.nodes:
+                        if node.type == "GROUP" and node.node_tree == ng:
+                            nodes_to_remove.append(node)
+
+                    for node in nodes_to_remove:
+                        node_tree.nodes.remove(node)
+                        removed_count += 1
+
+            # 从工程中删除节点组
+            bpy.data.node_groups.remove(ng)
+
+            if removed_count > 0:
+                self.report(
+                    {"INFO"},
+                    f"成功删除节点组 '{ng_name}' 及场景中的 {removed_count} 个实例",
+                )
+            else:
+                self.report({"INFO"}, f"成功删除节点组 '{ng_name}'")
+
+            return {"FINISHED"}
+
+        except Exception as e:
+            self.report({"ERROR"}, f"删除失败: {str(e)}")
             return {"CANCELLED"}
 
 
@@ -439,6 +573,9 @@ class MATHEXP_PT_Panel(bpy.types.Panel):
         layout = self.layout
         props = context.scene.math_expression_props
 
+        # 检查节点组是否存在
+        node_group_exists = props.node_group_name in bpy.data.node_groups
+
         # 表达式输入
         box = layout.box()
         box.label(text="表达式:", icon="SYNTAX_ON")
@@ -447,10 +584,33 @@ class MATHEXP_PT_Panel(bpy.types.Panel):
         # 节点组名称
         box.prop(props, "node_group_name", text="名称")
 
-        # 创建按钮
+        # 节点组状态提示
+        if node_group_exists:
+            status_row = box.row()
+            status_row.alert = False
+            status_row.label(text="节点组已存在", icon="CHECKMARK")
+
+        # 创建/更新按钮
         row = box.row()
         row.scale_y = 1.5
-        row.operator("node.math_expression_create", icon="ADD")
+
+        if node_group_exists:
+            # 如果节点组存在，只显示更新按钮
+            row.operator(
+                "node.math_expression_update", text="更新节点组", icon="FILE_REFRESH"
+            )
+        else:
+            # 如果不存在，只显示创建按钮
+            row.operator("node.math_expression_create", text="创建节点组", icon="ADD")
+
+        # 删除按钮（仅在节点组存在时显示）
+        if node_group_exists:
+            delete_row = box.row()
+            delete_row.scale_y = 1.2
+            delete_row.alert = True  # 使用警告颜色（红色）
+            delete_row.operator(
+                "node.math_expression_delete", text="删除节点组", icon="TRASH"
+            )
 
         # 选项
         box.prop(props, "clear_after_create", text="创建后清空表达式")
@@ -517,6 +677,8 @@ class MathExpressionProperties(bpy.types.PropertyGroup):
 classes = (
     MathExpressionProperties,
     MATHEXP_OT_CreateNodeGroup,
+    MATHEXP_OT_UpdateNodeGroup,
+    MATHEXP_OT_DeleteNodeGroup,
     MATHEXP_OT_InsertExample,
     MATHEXP_PT_Panel,
 )
