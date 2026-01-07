@@ -79,6 +79,7 @@ TERNARY_OPERATIONS = {
     "wrap": "WRAP",
     "smoothstep": "SMOOTH_MIN",
     "compare": "COMPARE",
+    "mix": "MIX",
 }
 
 # 运算符映射
@@ -212,11 +213,56 @@ class NodeTreeBuilder:
             node = self.node_tree.nodes.new("ShaderNodeClamp")
             node.location = loc
             inputs = [node.inputs[0], node.inputs[1], node.inputs[2]]
+        elif operation == "MIX":
+            # mix(a, b, factor) 使用数学公式: a * (1 - factor) + b * factor
+            # 这样可以兼容所有 Blender 版本
+            # 参数: arg1=a, arg2=b, arg3=factor
+
+            # 创建 (1 - factor)
+            loc1 = self.get_next_location()
+            one_minus_f = create_math_node(self.node_tree, "SUBTRACT", loc1)
+            one_minus_f.inputs[0].default_value = 1.0
+            if isinstance(arg3, bpy.types.NodeSocket):
+                link_sockets(arg3, one_minus_f.inputs[1], self.node_tree)
+            else:
+                one_minus_f.inputs[1].default_value = float(arg3)
+
+            # 创建 a * (1 - factor)
+            loc2 = self.get_next_location()
+            a_term = create_math_node(self.node_tree, "MULTIPLY", loc2)
+            if isinstance(arg1, bpy.types.NodeSocket):
+                link_sockets(arg1, a_term.inputs[0], self.node_tree)
+            else:
+                a_term.inputs[0].default_value = float(arg1)
+            link_sockets(one_minus_f.outputs[0], a_term.inputs[1], self.node_tree)
+
+            # 创建 b * factor
+            loc3 = self.get_next_location()
+            b_term = create_math_node(self.node_tree, "MULTIPLY", loc3)
+            if isinstance(arg2, bpy.types.NodeSocket):
+                link_sockets(arg2, b_term.inputs[0], self.node_tree)
+            else:
+                b_term.inputs[0].default_value = float(arg2)
+            if isinstance(arg3, bpy.types.NodeSocket):
+                link_sockets(arg3, b_term.inputs[1], self.node_tree)
+            else:
+                b_term.inputs[1].default_value = float(arg3)
+
+            # 创建 a * (1 - factor) + b * factor
+            loc4 = self.get_next_location()
+            result = create_math_node(self.node_tree, "ADD", loc4)
+            link_sockets(a_term.outputs[0], result.inputs[0], self.node_tree)
+            link_sockets(b_term.outputs[0], result.inputs[1], self.node_tree)
+
+            return result.outputs[0]
         else:
             node = create_math_node(self.node_tree, operation, loc)
             inputs = [node.inputs[0], node.inputs[1], node.inputs[2]]
+            args = [arg1, arg2, arg3]
 
-        args = [arg1, arg2, arg3]
+        if operation != "MIX":
+            args = [arg1, arg2, arg3]
+
         for i, (inp, arg) in enumerate(zip(inputs, args)):
             if isinstance(arg, bpy.types.NodeSocket):
                 link_sockets(arg, inp, self.node_tree)
@@ -691,6 +737,7 @@ class MATHEXP_PT_Panel(bpy.types.Panel):
                 ("sin(x) * a", "正弦波", "FCURVE"),
                 ("sqrt(x**2 + y**2)", "距离", "DRIVER_DISTANCE"),
                 ("clamp(x, 0, 1)", "限制范围", "CLIPUV_DEHLT"),
+                ("mix(a, b, t)", "线性插值", "ARROW_LEFTRIGHT"),
                 ("1 / (1 + exp(-x))", "Sigmoid", "IPO_EASE_IN_OUT"),
             ]
 
